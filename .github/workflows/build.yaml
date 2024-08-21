@@ -241,6 +241,9 @@ jobs:
     steps:
       - name: Clone
         uses: actions/checkout@v4
+        with:
+          repository: ${{ env.WHISPER_REPO }}
+          ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
 
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
