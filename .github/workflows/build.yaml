@@ -31,7 +31,7 @@ jobs:
           # read from 'state.json' file
           last_built_tag=$(jq -r '.last_build.tag' state.json)
           echo "LAST_BUILT_TAG=$last_built_tag" >> $GITHUB_OUTPUT
-          echo "DOBUILD=$(test $last_built_tag != $(echo $release | jq -r '.tag_name') && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "DOBUILD=$([[ $last_built_tag != $(echo $release | jq -r '.tag_name') ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
 
   ubuntu-latest-gcc:
     runs-on: ubuntu-latest
@@ -70,6 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: whisper-linux-${{ matrix.arch }}-gcc
+          path: build/bin
 
   macOS-latest:
     runs-on: macOS-latest
