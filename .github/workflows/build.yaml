@@ -64,7 +64,7 @@ jobs:
             apt update
             apt install -y build-essential cmake libsdl2-dev
             cmake . -DWHISPER_SDL2=ON -DCMAKE_BUILD_TYPE=${{ matrix.build }}
-            make
+            make'
       
       - name: Upload binaries
         uses: actions/upload-artifact@v4
@@ -109,7 +109,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { sys: UCRT64,  env: ucrt-x86_64,  build: Release }
+          # - { sys: UCRT64,  env: ucrt-x86_64,  build: Release }
           - { sys: CLANG64, env: clang-x86_64, build: Release }
 
     steps:
@@ -409,9 +409,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            build/*
+            build/*/whisper*
           tag_name: ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
-          release_name: ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
           body: |
             Whisper release ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
             [Changelog](${{ needs.run_check.outputs.LAST_WHISPER_URL }})
