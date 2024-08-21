@@ -8,7 +8,7 @@ on:
 
 env:
   ubuntu_image: "ubuntu:22.04"
-  WHISPER_REPO: "https://github.com/ggerganov/whisper.cpp/"
+  WHISPER_REPO: "ggerganov/whisper.cpp"
 
 jobs:
   run_check:
