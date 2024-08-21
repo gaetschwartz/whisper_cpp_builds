@@ -1,0 +1,415 @@
+name: CI
+on: 
+ schedule:
+   - cron: '0 0 * * *'
+
+# Taken from https://github.com/ggerganov/whisper.cpp/blob/master/.github/workflows/build.yml
+
+env:
+  ubuntu_image: "ubuntu:22.04"
+  WHISPER_REPO: "https://github.com/ggerganov/whisper.cpp/"
+
+jobs:
+  run_check:
+    runs-on: ubuntu-latest
+    outputs:
+      LAST_WHISPER_TAG: ${{ steps.get_release.outputs.LAST_WHISPER_TAG }}
+      LAST_WHISPER_URL: ${{ steps.get_release.outputs.LAST_WHISPER_URL }}
+      LAST_BUILT_TAG: ${{ steps.get_release.outputs.LAST_BUILT_TAG }}
+      DOBUILD: ${{ steps.get_release.outputs.DOBUILD }}
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Get last tag
+        id: get_release
+        run: |
+          release=$(curl -s https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest)
+          echo "LAST_WHISPER_TAG=$(echo $release | jq -r '.tag_name')" >> $GITHUB_OUTPUT
+          echo "LAST_WHISPER_URL=$(echo $release | jq -r '.html_url')" >> $GITHUB_OUTPUT
+          # read from 'state.json' file
+          last_built_tag=$(jq -r '.last_build.tag' state.json)
+          echo "LAST_BUILT_TAG=$last_built_tag" >> $GITHUB_OUTPUT
+          echo "DOBUILD=$(test $last_built_tag != $(echo $release | jq -r '.tag_name') && echo true || echo false)" >> $GITHUB_OUTPUT
+
+  ubuntu-latest-gcc:
+    runs-on: ubuntu-latest
+    needs: run_check
+    if: ${{ needs.run_check.outputs.DOBUILD == 'true' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [linux/amd64, linux/arm64, linux/arm/v7, linux/ppc64le]
+        build: [Release]
+
+    steps:
+      - name: Clone whisper
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.WHISPER_REPO }}
+          ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
+
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build ${{ matrix.arch }}
+        run: |
+          docker run --platform ${{ matrix.arch }} --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace ${{ env.ubuntu_image }} /bin/sh -c '
+            set -e
+            apt update
+            apt install -y build-essential cmake libsdl2-dev
+            cmake . -DWHISPER_SDL2=ON -DCMAKE_BUILD_TYPE=${{ matrix.build }}
+            make
+      
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-linux-${{ matrix.arch }}-gcc
+
+  macOS-latest:
+    runs-on: macOS-latest
+    needs: run_check
+    if: ${{ needs.run_check.outputs.DOBUILD == 'true' }}
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.WHISPER_REPO }}
+          ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
+
+
+      - name: Dependencies
+        run: |
+          brew update
+          brew install sdl2
+
+      - name: Build
+        run: |
+          make
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-macos-arm64-sdl2
+          path: build/bin
+
+  windows-msys2:
+    runs-on: windows-latest
+    needs: run_check
+    if: ${{ needs.run_check.outputs.DOBUILD == 'true' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { sys: UCRT64,  env: ucrt-x86_64,  build: Release }
+          - { sys: CLANG64, env: clang-x86_64, build: Release }
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.WHISPER_REPO }}
+          ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
+
+      - name: Setup ${{ matrix.sys }}
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: ${{matrix.sys}}
+          install: >-
+            base-devel
+            mingw-w64-${{matrix.env}}-toolchain
+            mingw-w64-${{matrix.env}}-cmake
+            mingw-w64-${{matrix.env}}-SDL2
+            mingw-w64-${{matrix.env}}-openblas
+      - name: Build using CMake w/ OpenBLAS
+        shell: msys2 {0}
+        run: |
+            cmake -B build -DGGML_OPENBLAS=ON
+            cmake --build build --config ${{ matrix.build }} -j $(nproc)
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-windows-x64-${{ matrix.sys }}-${{ matrix.build }}
+          path: build/bin
+      
+          
+
+  # windows-blas:
+  #   runs-on: windows-latest
+  #   needs: run_check
+  #   if: ${{ needs.run_check.outputs.DOBUILD == 'true' }}
+
+  #   strategy:
+  #     matrix:
+  #       build: [Release]
+  #       arch: 
+  #         - Win32
+  #         - x64
+  #       blas: [ON]
+  #       sdl2: [ON]
+  #       include:
+  #         - arch: Win32
+  #           obzip: https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.25/OpenBLAS-0.3.25-x86.zip
+  #           s2arc: x86
+  #         - arch: x64
+  #           obzip: https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.25/OpenBLAS-0.3.25-x64.zip
+  #           s2arc: x64
+  #         - sdl2: ON
+  #           s2ver: 2.28.5
+
+  #   steps:
+  #     - name: Clone
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: ${{ env.WHISPER_REPO }}
+  #         ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
+
+  #     - name: Add msbuild to PATH
+  #       uses: microsoft/setup-msbuild@v2
+
+  #     - name: Fetch OpenBLAS
+  #       if: matrix.blas == 'ON'
+  #       run: |
+  #         C:/msys64/usr/bin/wget.exe -qO blas.zip ${{ matrix.obzip }}
+  #         7z x blas.zip -oblas -y
+  #         copy blas/include/cblas.h .
+  #         copy blas/include/openblas_config.h .
+  #         echo "OPENBLAS_PATH=$env:GITHUB_WORKSPACE/blas" >> $env:GITHUB_ENV
+
+  #     - name: Fetch SDL2 and set SDL2_DIR
+  #       if: matrix.sdl2 == 'ON'
+  #       run: |
+  #         C:/msys64/usr/bin/wget.exe -qO sdl2.zip https://github.com/libsdl-org/SDL/releases/download/release-${{ matrix.s2ver }}/SDL2-devel-${{ matrix.s2ver }}-VC.zip
+  #         7z x sdl2.zip
+  #         echo "SDL2_DIR=$env:GITHUB_WORKSPACE/SDL2-${{ matrix.s2ver }}/cmake" >> $env:GITHUB_ENV
+
+  #     - name: Configure
+  #       run: >
+  #         cmake -S . -B ./build -A ${{ matrix.arch }}
+  #         -DCMAKE_BUILD_TYPE=${{ matrix.build }}
+  #         -DGGML_OPENBLAS=${{ matrix.blas }}
+  #         -DCMAKE_LIBRARY_PATH="$env:OPENBLAS_PATH/lib"
+  #         -DWHISPER_SDL2=${{ matrix.sdl2 }}
+
+  #     - name: Build
+  #       run: |
+  #         cd ./build
+  #         msbuild ALL_BUILD.vcxproj -t:build -p:configuration=${{ matrix.build }} -p:platform=${{ matrix.arch }}
+
+  #     - name: Copy libopenblas.dll
+  #       if: matrix.blas == 'ON'
+  #       run: copy "$env:OPENBLAS_PATH/bin/libopenblas.dll" build/bin/${{ matrix.build }}
+
+  #     - name: Copy SDL2.dll
+  #       if: matrix.sdl2 == 'ON'
+  #       run: copy "$env:SDL2_DIR/../lib/${{ matrix.s2arc }}/SDL2.dll" build/bin/${{ matrix.build }}
+
+  #     - name: Upload binaries
+  #       if: matrix.blas == 'ON' && matrix.sdl2 == 'ON'
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: whisper-${{ matrix.arch }}-${{ matrix.build }}-blas-sdl2
+  #         path: build/bin/${{ matrix.build }}
+
+  windows-cublas:
+    runs-on: windows-2019
+    needs: run_check
+    if: ${{ needs.run_check.outputs.DOBUILD == 'true' }}
+
+    strategy:
+      matrix:
+        build: [Release]
+        arch: [x64]
+        cublas: [ON]
+        sdl2: [ON]
+        cuda-toolkit: [12.2.0]
+        include:
+          - arch: x64
+            s2arc: x64
+          - sdl2: ON
+            s2ver: 2.28.5
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install CUDA Toolkit
+        id: cuda-toolkit
+        uses: Jimver/cuda-toolkit@v0.2.15
+        with:
+          cuda: '${{ matrix.cuda-toolkit }}'
+
+      - name: Fetch SDL2 and set SDL2_DIR
+        if: matrix.sdl2 == 'ON'
+        run: |
+          C:/msys64/usr/bin/wget.exe -qO sdl2.zip https://github.com/libsdl-org/SDL/releases/download/release-${{ matrix.s2ver }}/SDL2-devel-${{ matrix.s2ver }}-VC.zip
+          7z x sdl2.zip
+          echo "SDL2_DIR=$env:GITHUB_WORKSPACE/SDL2-${{ matrix.s2ver }}/cmake" >> $env:GITHUB_ENV
+
+      - name: Configure
+        run: >
+          cmake -S . -B ./build -A ${{ matrix.arch }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build }}
+          -DGGML_CUDA=${{ matrix.cublas }}
+          -DWHISPER_SDL2=${{ matrix.sdl2 }}
+
+      - name: Build ${{ matrix.cuda-toolkit }}
+        run: |
+          cd ./build
+          cmake --build . --config ${{ matrix.build }}
+
+      - name: Copy CUDA DLLs
+        run: >
+          Copy-Item -PassThru
+          -Path "${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/bin/*.dll"
+          -Include cudart64_*,cublas64_*,cublasLt64_*
+          -Destination build/bin/${{ matrix.build }}
+
+      - name: Copy SDL2.dll
+        if: matrix.sdl2 == 'ON'
+        run: copy "$env:SDL2_DIR/../lib/${{ matrix.s2arc }}/SDL2.dll" build/bin/${{ matrix.build }}
+
+      - name: Upload binaries
+        if: matrix.sdl2 == 'ON'
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-windows-${{ matrix.arch }}-cublas_${{ matrix.cuda-toolkit }}-sdl2
+          path: build/bin/${{ matrix.build }}
+
+  # emscripten:
+  #   runs-on: ubuntu-latest
+
+  #   strategy:
+  #     matrix:
+  #       build: [Release]
+
+  #   steps:
+  #     - name: Clone
+  #       uses: actions/checkout@v4
+
+  #     - name: Setup emsdk
+  #       uses: mymindstorm/setup-emsdk@v14
+
+  #     - name: Verify
+  #       run: emcc -v
+
+  #     - name: Build
+  #       run: |
+  #         emcmake cmake . -DCMAKE_BUILD_TYPE=${{ matrix.build }}
+  #         make
+
+  # ios:
+  #   runs-on: macos-latest
+
+  #   strategy:
+  #     matrix:
+  #       build: [Release]
+
+  #   steps:
+  #     - name: Clone
+  #       uses: actions/checkout@v4
+
+  #     - name: Configure
+  #       run: |
+  #         cp models/for-tests-ggml-base.en.bin models/ggml-base.en.bin
+  #         mkdir models/ggml-base.en-encoder.mlmodelc
+
+  #     - name: Build objc example
+  #       run: xcodebuild -project examples/whisper.objc/whisper.objc.xcodeproj -scheme whisper.objc -configuration ${{ matrix.build }} -sdk iphonesimulator build
+
+  #     - name: Build swiftui example
+  #       run: xcodebuild -project examples/whisper.swiftui/whisper.swiftui.xcodeproj -scheme WhisperCppDemo -configuration ${{ matrix.build }} -sdk iphonesimulator build
+
+  # android:
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Clone
+  #       uses: actions/checkout@v4
+  #       with:
+  #         path: whisper
+
+  #     - name: Clone
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: ggerganov/ggml
+  #         path: ggml
+
+  #     - name: Install Java
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: zulu
+  #         java-version: 21
+
+  #     - name: Setup Android SDK
+  #       uses: android-actions/setup-android@v3
+
+  #     - name: Build
+  #       run: |
+  #         cd whisper/examples/whisper.android
+  #         ./gradlew assembleRelease --no-daemon
+
+  #     - name: Build with external ggml
+  #       run: |
+  #         export PATH_TO_GGML=$PWD/ggml
+  #         cd whisper/examples/whisper.android
+  #         ./gradlew assembleRelease --no-daemon -PGGML_HOME=$PATH_TO_GGML
+
+
+  make-release:
+    runs-on: ubuntu-latest
+    needs: 
+      - run_check
+      - ubuntu-latest-gcc
+      - macOS-latest
+      - windows-msys2
+      - windows-cublas
+      # - windows-blas
+    if: ${{ needs.run_check.outputs.DOBUILD == 'true' }}
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build
+      - name: Update state.json
+        run: |
+          tag=${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
+          # "last_build": {
+          #   "date": "",
+          #   "status": "success",
+          #   "tag": "",
+          #   "run_number": 0
+          # }
+          jq ".last_build = {date: \"$(date)\", status: \"success\", tag: \"$tag\", run_number: ${{ github.run_number }}} " state.json > state.json.tmp
+          mv state.json.tmp state.json
+          git config --global user.email "gh-bot@gaetans.dev"
+          git config --global user.name "GitHub Bot"
+          git add state.json
+          git commit -m "Bump last build to $tag"
+          git push
+
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            build/*
+          tag_name: ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
+          release_name: ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
+          body: |
+            Whisper release ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}
+            [Changelog](${{ needs.run_check.outputs.LAST_WHISPER_URL }})
