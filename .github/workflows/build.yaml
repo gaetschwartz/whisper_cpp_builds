@@ -43,12 +43,22 @@ jobs:
         arch: [linux/amd64, linux/arm64, linux/arm/v7, linux/ppc64le]
         build: [Release]
 
+    env:
+      whisper_cpp_builds_image: "gaetans/whisper-cpp-builds:latest"
+      whisper_cpp_path: "whisper-cpp"
+      whisper_cpp_builds_path: "whisper-cpp-builds"
     steps:
       - name: Clone whisper
         uses: actions/checkout@v4
         with:
           repository: ${{ env.WHISPER_REPO }}
           ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
+          path: ${{ env.whisper_cpp_path }}
+
+      - name: Clone self
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.whisper_cpp_builds_path }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -59,21 +69,19 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: docker/ubuntu
+          context: ${{ env.whisper_cpp_builds_path }}/docker/ubuntu
           push: false
-          tags: "gaetans/whisper-cpp-build:latest"
+          load: true
+          tags: ${{ env.whisper_cpp_builds_image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Build ${{ matrix.arch }}
         run: |
           docker run --platform ${{ matrix.arch }} --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace gaetans/whisper-cpp-build:latest \
+            -v ${{ github.workspace }}/${{ env.whisper_cpp_path }}:/workspace \
+            -w /workspace ${{ env.whisper_cpp_builds_image }} \
             /bin/sh -c '
-              set -e
-              apt update
-              apt install -y build-essential cmake libsdl2-dev
               cmake . -DWHISPER_SDL2=ON -DCMAKE_BUILD_TYPE=${{ matrix.build }}
               make
             '
@@ -82,7 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: whisper-linux-${{ matrix.arch }}-gcc
-          path: build/bin
+          path: ${{ env.whisper_cpp_path }}/build/bin
 
   macOS-latest:
     runs-on: macOS-latest
@@ -285,11 +293,11 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build ${{ matrix.cuda-toolkit }}
-        run: |
-          cd ./build
-          cmake \ 
-            --build . \
-            --config ${{ matrix.build }}
+        working-directory: ./build
+        run: >
+          cmake 
+          --build .
+          --config ${{ matrix.build }}
 
       - name: Run sccache stat for check
         shell: bash
