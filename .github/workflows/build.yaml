@@ -11,6 +11,7 @@ on:
 
 env:
   WHISPER_REPO: "ggerganov/whisper.cpp"
+  UBUNTU_IMAGE: "ubuntu:22.04"
 
 jobs:
   run_check:
@@ -66,25 +67,14 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ env.whisper_cpp_builds_path }}/docker/ubuntu
-          push: false
-          load: true
-          tags: ${{ env.whisper_cpp_builds_image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Build ${{ matrix.arch }}
         run: |
-          docker run --platform linux/${{ matrix.arch }} --rm \
-            -v ${{ github.workspace }}/${{ env.whisper_cpp_path }}:/workspace \
-            -w /workspace ${{ env.whisper_cpp_builds_image }} \
-            /bin/sh -c '
+          docker run --platform ${{ matrix.arch }} --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace ${{ env.UBUNTU_IMAGE }} /bin/sh -c '
+              set -e
+              apt update
+              apt install -y build-essential cmake libsdl2-dev
               cmake . -DWHISPER_SDL2=ON -DCMAKE_BUILD_TYPE=${{ matrix.build }}
               make
             '
