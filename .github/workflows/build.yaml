@@ -1,8 +1,11 @@
-name: CI
+name: Autobuild
 on:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 # Taken from https://github.com/ggerganov/whisper.cpp/blob/master/.github/workflows/build.yml
 
@@ -40,11 +43,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [linux/amd64, linux/arm64, linux/arm/v7, linux/ppc64le]
+        arch: [amd64, arm64, arm/v7, ppc64le]
         build: [Release]
 
     env:
-      whisper_cpp_builds_image: "gaetans/whisper-cpp-builds:latest"
+      whisper_cpp_builds_image: "gaetans/whisper-cpp-builds:${{ matrix.arch }}"
       whisper_cpp_path: "whisper-cpp"
       whisper_cpp_builds_path: "whisper-cpp-builds"
     steps:
@@ -78,7 +81,7 @@ jobs:
 
       - name: Build ${{ matrix.arch }}
         run: |
-          docker run --platform ${{ matrix.arch }} --rm \
+          docker run --platform linux/${{ matrix.arch }} --rm \
             -v ${{ github.workspace }}/${{ env.whisper_cpp_path }}:/workspace \
             -w /workspace ${{ env.whisper_cpp_builds_image }} \
             /bin/sh -c '
