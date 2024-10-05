@@ -1,13 +1,12 @@
 name: CI
-on: 
+on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 # Taken from https://github.com/ggerganov/whisper.cpp/blob/master/.github/workflows/build.yml
 
 env:
-  ubuntu_image: "ubuntu:22.04"
   WHISPER_REPO: "ggerganov/whisper.cpp"
 
 jobs:
@@ -51,21 +50,34 @@ jobs:
           repository: ${{ env.WHISPER_REPO }}
           ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
 
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/ubuntu
+          push: false
+          tags: "gaetans/whisper-cpp-build:latest"
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build ${{ matrix.arch }}
         run: |
           docker run --platform ${{ matrix.arch }} --rm \
             -v ${{ github.workspace }}:/workspace \
-            -w /workspace ${{ env.ubuntu_image }} /bin/sh -c '
-            set -e
-            apt update
-            apt install -y build-essential cmake libsdl2-dev
-            cmake . -DWHISPER_SDL2=ON -DCMAKE_BUILD_TYPE=${{ matrix.build }}
-            make'
-      
+            -w /workspace gaetans/whisper-cpp-build:latest \
+            /bin/sh -c '
+              set -e
+              apt update
+              apt install -y build-essential cmake libsdl2-dev
+              cmake . -DWHISPER_SDL2=ON -DCMAKE_BUILD_TYPE=${{ matrix.build }}
+              make
+            '
+
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
@@ -83,7 +95,6 @@ jobs:
         with:
           repository: ${{ env.WHISPER_REPO }}
           ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
-
 
       - name: Dependencies
         run: |
@@ -133,15 +144,13 @@ jobs:
       - name: Build using CMake w/ OpenBLAS
         shell: msys2 {0}
         run: |
-            cmake -B build -DGGML_OPENBLAS=ON
-            cmake --build build --config ${{ matrix.build }} -j $(nproc)
+          cmake -B build -DGGML_OPENBLAS=ON
+          cmake --build build --config ${{ matrix.build }} -j $(nproc)
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: whisper-windows-x64-${{ matrix.sys }}-${{ matrix.build }}
           path: build/bin
-      
-          
 
   # windows-blas:
   #   runs-on: windows-latest
@@ -151,7 +160,7 @@ jobs:
   #   strategy:
   #     matrix:
   #       build: [Release]
-  #       arch: 
+  #       arch:
   #         - Win32
   #         - x64
   #       blas: [ON]
@@ -237,7 +246,9 @@ jobs:
             s2arc: x64
           - sdl2: ON
             s2ver: 2.28.5
-
+    env:
+      cache-name: cache-windows-build-${{ matrix.build }}-${{ matrix.arch }}-${{ matrix.cublas == 'ON' && '' || 'no' }}_cublas-${{ matrix.sdl2 == 'ON' && matrix.s2ver || 'no' }}_sdl2-${{ matrix.cuda-toolkit }}_cuda
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Clone
         uses: actions/checkout@v4
@@ -252,7 +263,10 @@ jobs:
         id: cuda-toolkit
         uses: Jimver/cuda-toolkit@v0.2.15
         with:
-          cuda: '${{ matrix.cuda-toolkit }}'
+          cuda: "${{ matrix.cuda-toolkit }}"
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Fetch SDL2 and set SDL2_DIR
         if: matrix.sdl2 == 'ON'
@@ -267,11 +281,19 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build }}
           -DGGML_CUDA=${{ matrix.cublas }}
           -DWHISPER_SDL2=${{ matrix.sdl2 }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build ${{ matrix.cuda-toolkit }}
         run: |
           cd ./build
-          cmake --build . --config ${{ matrix.build }}
+          cmake \ 
+            --build . \
+            --config ${{ matrix.build }}
+
+      - name: Run sccache stat for check
+        shell: bash
+        run: ${SCCACHE_PATH} --show-stats
 
       - name: Copy CUDA DLLs
         run: >
@@ -370,10 +392,9 @@ jobs:
   #         cd whisper/examples/whisper.android
   #         ./gradlew assembleRelease --no-daemon -PGGML_HOME=$PATH_TO_GGML
 
-
   make-release:
     runs-on: ubuntu-latest
-    needs: 
+    needs:
       - run_check
       - ubuntu-latest-gcc
       - macOS-latest
@@ -399,12 +420,13 @@ jobs:
           # }
           jq ".last_build = {date: \"$(date)\", status: \"success\", tag: \"$tag\", run_number: ${{ github.run_number }}} " state.json > state.json.tmp
           mv state.json.tmp state.json
-          git config --global user.email "gh-bot@gaetans.dev"
-          git config --global user.name "GitHub Bot"
-          git add state.json
-          git commit -m "Bump last build to $tag"
-          git remote set-url --push origin https://x-access-token:${{ secrets.GH_WRITE_TOKEN }}@github.com/${{ github.repository }}.git
-          git push
+
+      - name: Commit
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: "[Bot] Bump last build to ${{ needs.run_check.outputs.LAST_WHISPER_TAG }}"
+          default_author: github_actions
+          push: true
 
       - name: Create release
         id: create_release
