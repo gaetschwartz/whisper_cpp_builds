@@ -244,7 +244,7 @@ jobs:
             s2ver: 2.28.5
     env:
       cache-name: cache-windows-build-${{ matrix.build }}-${{ matrix.arch }}-${{ matrix.cublas == 'ON' && '' || 'no' }}_cublas-${{ matrix.sdl2 == 'ON' && matrix.s2ver || 'no' }}_sdl2-${{ matrix.cuda-toolkit }}_cuda
-      SCCACHE_GHA_ENABLED: "true"
+      ccache-variant: ccache
     steps:
       - name: Clone
         uses: actions/checkout@v4
@@ -261,8 +261,12 @@ jobs:
         with:
           cuda: "${{ matrix.cuda-toolkit }}"
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+      - name: Setup ${{ env.ccache-variant }}
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          variant: ${{ env.ccache-variant }}
+          key: ${{ env.cache-name }}
+          create-symlink: true
 
       - name: Fetch SDL2 and set SDL2_DIR
         if: matrix.sdl2 == 'ON'
@@ -279,6 +283,8 @@ jobs:
           -DWHISPER_SDL2=${{ matrix.sdl2 }}
           -DCMAKE_C_COMPILER_LAUNCHER=sccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
+          -DCMAKE_POLICY_CMP0141=NEW
 
       - name: Build ${{ matrix.cuda-toolkit }}
         working-directory: ./build
@@ -286,10 +292,8 @@ jobs:
           cmake 
           --build .
           --config ${{ matrix.build }}
-
-      - name: Run sccache stat for check
-        shell: bash
-        run: ${SCCACHE_PATH} --show-stats
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Copy CUDA DLLs
         run: >
@@ -389,6 +393,8 @@ jobs:
   #         ./gradlew assembleRelease --no-daemon -PGGML_HOME=$PATH_TO_GGML
 
   make-release:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     needs:
       - run_check
