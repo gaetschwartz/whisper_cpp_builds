@@ -69,7 +69,7 @@ jobs:
 
       - name: Build ${{ matrix.arch }}
         run: |
-          docker run --platform ${{ matrix.arch }} --rm \
+          docker run --platform linux/${{ matrix.arch }} --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace ${{ env.UBUNTU_IMAGE }} /bin/sh -c '
               set -e
