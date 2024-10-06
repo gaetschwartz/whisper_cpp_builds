@@ -59,18 +59,13 @@ jobs:
           ref: ${{ needs.run_check.outputs.LAST_BUILT_TAG }}
           path: ${{ env.whisper_cpp_path }}
 
-      - name: Clone self
-        uses: actions/checkout@v4
-        with:
-          path: ${{ env.whisper_cpp_builds_path }}
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Build ${{ matrix.arch }}
         run: |
           docker run --platform ${{ matrix.arch }} --rm \
-            -v ${{ github.workspace }}:/workspace \
+            -v ${{ github.workspace }}/${{ env.whisper_cpp_path }}:/workspace \
             -w /workspace ${{ env.UBUNTU_IMAGE }} /bin/sh -c '
               set -e
               apt update
