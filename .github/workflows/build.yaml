@@ -266,7 +266,6 @@ jobs:
         with:
           variant: ${{ env.ccache-variant }}
           key: ${{ env.cache-name }}
-          create-symlink: true
 
       - name: Fetch SDL2 and set SDL2_DIR
         if: matrix.sdl2 == 'ON'
