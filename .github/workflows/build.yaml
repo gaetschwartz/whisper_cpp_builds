@@ -280,10 +280,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build }}
           -DGGML_CUDA=${{ matrix.cublas }}
           -DWHISPER_SDL2=${{ matrix.sdl2 }}
-          -DCMAKE_C_COMPILER_LAUNCHER=sccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-          -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
-          -DCMAKE_POLICY_CMP0141=NEW
 
       - name: Build ${{ matrix.cuda-toolkit }}
         working-directory: ./build
@@ -291,8 +287,6 @@ jobs:
           cmake 
           --build .
           --config ${{ matrix.build }}
-          -DCMAKE_C_COMPILER_LAUNCHER=sccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Copy CUDA DLLs
         run: >
